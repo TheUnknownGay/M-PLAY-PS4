@@ -27,7 +27,7 @@ jobs:
       # 2. Vérifier les fichiers du projet
       - name: Verify project files
         run: |
-          echo "Checking repository files..."
+          echo "=== Repository ==="
           pwd
           ls -la
 
@@ -48,37 +48,23 @@ jobs:
           done
 
           if [ "$missing" -ne 0 ]; then
-            echo "Required project files are missing."
+            echo "Required files are missing."
             exit 1
           fi
 
-      # 3. Vérifier la toolchain OpenOrbis
-      - name: Diagnose OpenOrbis toolchain
-        run: |
-          docker run --rm \
-            --user 0:0 \
-            --entrypoint /bin/sh \
-            openorbisofficial/toolchain:latest \
-            -c '
-              echo "SDK environment:"
-              echo "OO_PS4_TOOLCHAIN=$OO_PS4_TOOLCHAIN"
-
-              echo "Checking expected paths:"
-              ls -la /lib/OpenOrbisSDK/bin/linux/ || true
-
-              echo "Searching for create-fself:"
-              find /lib /usr/local /opt \
-                -type f -name create-fself 2>/dev/null || true
-            '
-
-      # 4. Compiler et construire le package
+      # 3. Diagnostiquer l'installation OpenOrbis
       - name: Diagnose OpenOrbis installation
         run: |
+          docker pull openorbisofficial/toolchain:latest
+
           docker run --rm \
             --user 0:0 \
             --entrypoint /bin/sh \
             openorbisofficial/toolchain:latest \
             -c '
+              echo "=== SDK environment ==="
+              echo "OO_PS4_TOOLCHAIN=$OO_PS4_TOOLCHAIN"
+
               echo "=== SDK directory ==="
               ls -la /lib/OpenOrbisSDK || true
 
@@ -90,9 +76,35 @@ jobs:
 
               echo "=== Search PkgTool.Core ==="
               find / -type f -name PkgTool.Core 2>/dev/null || true
+
+              echo "=== Search linker ==="
+              find / -type f -name ld.lld 2>/dev/null || true
             '
 
-      # 5. Publier les fichiers générés
+      # 4. Vérifier les outils attendus
+      - name: Verify OpenOrbis tools
+        run: |
+          docker run --rm \
+            --user 0:0 \
+            --entrypoint /bin/sh \
+            openorbisofficial/toolchain:latest \
+            -c '
+              test -x /lib/OpenOrbisSDK/bin/linux/create-fself &&
+              test -x /lib/OpenOrbisSDK/bin/linux/PkgTool.Core &&
+              test -f /lib/OpenOrbisSDK/link.x
+            '
+
+      # 5. Compiler et construire le package
+      - name: Compile with OpenOrbis
+        run: |
+          docker run --rm \
+            --user 0:0 \
+            -v "$GITHUB_WORKSPACE:/workspace" \
+            -w /workspace \
+            openorbisofficial/toolchain:latest \
+            make
+
+      # 6. Publier les fichiers générés, même si le build échoue
       - name: Upload build artifacts
         if: always()
         uses: actions/upload-artifact@v4
