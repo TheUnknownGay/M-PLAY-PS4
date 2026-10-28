@@ -118,7 +118,7 @@ jobs:
             '
 
       # 5. Compiler et construire le package
-       - name: Diagnose OpenOrbis SDK
+      - name: Diagnose OpenOrbis SDK
         run: |
           docker run --rm \
             --entrypoint /bin/sh \
