@@ -129,3 +129,44 @@ steps:
           fi
 
           echo "=== Toolchain ==="
+          command -v clang
+          command -v clang++
+          command -v ld.lld
+          python3 --version
+          make --version | head -1
+
+          echo "=== Clean ==="
+          make clean
+
+          echo "=== Compile and package ==="
+          make
+        '
+
+  # 8. Vérifier le fichier PKG généré
+  - name: Verify PKG output
+    shell: bash
+    run: |
+      set -euo pipefail
+
+      echo "=== Generated packages ==="
+      find . -maxdepth 1 -type f -name '*.pkg' -print
+
+      PKG_FILE="$(find . -maxdepth 1 -type f -name '*.pkg' -print -quit)"
+
+      if [ -z "$PKG_FILE" ]; then
+        echo "::error::No PKG file was generated."
+        exit 1
+      fi
+
+      echo "PKG generated: $PKG_FILE"
+      ls -lh "$PKG_FILE"
+
+  # 9. Publier le PKG comme artefact téléchargeable
+  - name: Upload PS4 package
+    uses: actions/upload-artifact@v4
+    with:
+      name: M-PLAY-PS4-PKG
+      path: '*.pkg'
+      if-no-files-found: error
+      retention-days: 7
+```
