@@ -118,14 +118,24 @@ jobs:
             '
 
       # 5. Compiler et construire le package
-      - name: Compile with OpenOrbis
+       - name: Diagnose OpenOrbis SDK
         run: |
           docker run --rm \
-            --user 0:0 \
-            -v "$GITHUB_WORKSPACE:/workspace" \
-            -w /workspace \
+            --entrypoint /bin/sh \
             openorbisofficial/toolchain:latest \
-            make
+            -c '
+              echo "=== Variables ==="
+              echo "OO_PS4_TOOLCHAIN=$OO_PS4_TOOLCHAIN"
+
+              echo "=== Répertoires possibles ==="
+              ls -ld /lib/OpenOrbisSDK /OpenOrbisSDK /opt/OpenOrbisSDK 2>/dev/null || true
+
+              echo "=== Recherche des outils ==="
+              find / -type f \( \
+                -name create-fself -o \
+                -name PkgTool.Core \
+              \) 2>/dev/null | head -50
+            '
 
       # 6. Publier les fichiers générés, même si le build échoue
       - name: Upload build artifacts
