@@ -20,21 +20,25 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
+      # 1. Récupérer le dépôt
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      # 2. Vérifier les fichiers du projet
       - name: Verify project files
         run: |
-          echo "Current directory:"
+          echo "Checking repository files..."
           pwd
-
-          echo "Repository contents:"
           ls -la
 
-          echo "Checking required files..."
           missing=0
 
-          for file in Makefile src/main.cpp tools/make_gp4.py sce_sys/icon0.png; do
+          for file in \
+            Makefile \
+            src/main.cpp \
+            tools/make_gp4.py \
+            sce_sys/icon0.png
+          do
             if [ -f "$file" ]; then
               echo "OK: $file"
             else
@@ -44,10 +48,28 @@ jobs:
           done
 
           if [ "$missing" -ne 0 ]; then
-            echo "One or more required files are missing."
+            echo "Required project files are missing."
             exit 1
           fi
 
+      # 3. Vérifier la toolchain OpenOrbis
+      - name: Verify OpenOrbis toolchain
+        run: |
+          docker run --rm \
+            --user 0:0 \
+            openorbisofficial/toolchain:latest \
+            sh -c '
+              echo "Checking OpenOrbis SDK..."
+              echo "OO_PS4_TOOLCHAIN=$OO_PS4_TOOLCHAIN"
+
+              test -x /lib/OpenOrbisSDK/bin/linux/create-fself
+              test -x /lib/OpenOrbisSDK/bin/linux/PkgTool.Core
+              test -f /lib/OpenOrbisSDK/link.x
+
+              echo "OpenOrbis SDK checks passed."
+            '
+
+      # 4. Compiler et construire le package
       - name: Compile with OpenOrbis
         run: |
           docker run --rm \
@@ -57,6 +79,7 @@ jobs:
             openorbisofficial/toolchain:latest \
             make
 
+      # 5. Publier les fichiers générés
       - name: Upload build artifacts
         if: always()
         uses: actions/upload-artifact@v4
@@ -67,5 +90,6 @@ jobs:
             eboot.bin
             pkg.gp4
             build/**
+            sce_sys/param.sfo
           if-no-files-found: warn
           retention-days: 7
