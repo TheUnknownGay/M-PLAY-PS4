@@ -1,153 +1,122 @@
 name: Build M-PLAY PS4
 
 on:
-  push:
-    branches:
-      - main
-
-  pull_request:
-    branches:
-      - main
-
-  workflow_dispatch:
+push:
+branches: [main, master]
+pull_request:
+branches: [main, master]
+workflow_dispatch:
 
 permissions:
-  contents: read
+contents: read
 
 jobs:
-  build:
-    name: Compile and package M-PLAY PS4
-    runs-on: ubuntu-latest
+build:
+name: Compile M-PLAY PS4
+runs-on: ubuntu-latest
 
-    steps:
-      # 1. Récupérer le dépôt
-      - name: Checkout repository
-        uses: actions/checkout@v4
+steps:
+  - name: Checkout M-PLAY PS4
+    uses: actions/checkout@v4
 
-      # 2. Vérifier les fichiers du projet
-      - name: Verify project files
-        run: |
-          echo "=== Repository ==="
-          pwd
-          ls -la
+  - name: Set up Go
+    uses: actions/setup-go@v5
+    with:
+      go-version: '1.17'
 
-          missing=0
+  - name: Checkout create-fself
+    uses: actions/checkout@v4
+    with:
+      repository: OpenOrbis/create-fself
+      path: create-fself-src
 
-          for file in \
-            Makefile \
-            src/main.cpp \
-            tools/make_gp4.py \
-            sce_sys/icon0.png
-          do
-            if [ -f "$file" ]; then
-              echo "OK: $file"
+  - name: Build create-fself
+    working-directory: create-fself-src/cmd/create-fself
+    run: |
+      mkdir -p "$GITHUB_WORKSPACE/tools"
+      go build \
+        -o "$GITHUB_WORKSPACE/tools/create-fself" \
+        -modfile=go-linux.mod
+      chmod +x "$GITHUB_WORKSPACE/tools/create-fself"
+      test -x "$GITHUB_WORKSPACE/tools/create-fself"
+
+  - name: Verify project files
+    run: |
+      set -eu
+
+      for file in \
+        Makefile \
+        src/main.cpp \
+        tools/make_gp4.py \
+        sce_sys/icon0.png
+      do
+        if [ ! -f "$file" ]; then
+          echo "::error::Missing project file: $file"
+          exit 1
+        fi
+      done
+
+      echo "Project files verified."
+      echo "create-fself built successfully."
+
+  - name: Compile with OpenOrbis
+    run: |
+      set -eu
+
+      docker pull openorbisofficial/toolchain:latest
+
+      docker run --rm \
+        --user 0:0 \
+        -v "$GITHUB_WORKSPACE:/workspace" \
+        -w /workspace \
+        --entrypoint /bin/sh \
+        openorbisofficial/toolchain:latest \
+        -c '
+          set -eu
+
+          SDK="${OO_PS4_TOOLCHAIN:-/lib/OpenOrbisSDK}"
+          mkdir -p "$SDK/bin/linux"
+
+          if [ ! -x "$SDK/bin/linux/PkgTool.Core" ]; then
+            if [ -x /usr/lib/OpenOrbisSDK/bin/linux/PkgTool.Core ]; then
+              ln -sf \
+                /usr/lib/OpenOrbisSDK/bin/linux/PkgTool.Core \
+                "$SDK/bin/linux/PkgTool.Core"
             else
-              echo "MISSING: $file"
-              missing=1
+              echo "ERROR: PkgTool.Core was not found."
+              exit 1
             fi
-          done
+          fi
 
-          if [ "$missing" -ne 0 ]; then
-            echo "Required files are missing."
+          if [ ! -x /workspace/tools/create-fself ]; then
+            echo "ERROR: create-fself is missing."
             exit 1
           fi
 
-      # 3. Diagnostiquer l'installation OpenOrbis
-      - name: Diagnose OpenOrbis installation
-        run: |
-          docker pull openorbisofficial/toolchain:latest
+          echo "=== OpenOrbis SDK ==="
+          echo "$SDK"
+          echo "=== Building M-PLAY PS4 ==="
 
-          docker run --rm \
-            --user 0:0 \
-            --entrypoint /bin/sh \
-            openorbisofficial/toolchain:latest \
-            -c '
-              echo "=== SDK environment ==="
-              echo "OO_PS4_TOOLCHAIN=$OO_PS4_TOOLCHAIN"
+          make clean
+          make
+        '
 
-              echo "=== SDK directory ==="
-              ls -la /lib/OpenOrbisSDK || true
+  - name: Verify PKG output
+    run: |
+      set -eu
 
-              echo "=== Linux tools ==="
-              ls -la /lib/OpenOrbisSDK/bin/linux || true
+      echo "=== Generated packages ==="
+      find . -maxdepth 1 -type f -name '*.pkg' -print
 
-              echo "=== Search create-fself ==="
-              find / -type f -name create-fself 2>/dev/null || true
+      if ! find . -maxdepth 1 -type f -name '*.pkg' -print -quit | grep -q .; then
+        echo "::error::No PKG file was generated."
+        exit 1
+      fi
 
-              echo "=== Search PkgTool.Core ==="
-              find / -type f -name PkgTool.Core 2>/dev/null || true
-
-              echo "=== Search linker ==="
-              find / -type f -name ld.lld 2>/dev/null || true
-            '
-
-      # 4. Vérifier les outils attendus
-      - name: Diagnose OpenOrbis tools
-        run: |
-          docker run --rm \
-            --user 0:0 \
-            --entrypoint /bin/sh \
-            openorbisofficial/toolchain:latest \
-            -c '
-              SDK="${OO_PS4_TOOLCHAIN:-/lib/OpenOrbisSDK}"
-
-              echo "=== SDK: $SDK ==="
-              ls -la "$SDK" || true
-
-              for file in \
-                "$SDK/bin/linux/create-fself" \
-                "$SDK/bin/linux/PkgTool.Core" \
-                "$SDK/link.x"
-              do
-                if [ -f "$file" ]; then
-                  ls -l "$file"
-                  if [ -x "$file" ]; then
-                    echo "EXECUTABLE: $file"
-                  else
-                    echo "NOT EXECUTABLE: $file"
-                  fi
-                else
-                  echo "MISSING: $file"
-                fi
-              done
-
-              echo "=== Searching SDK ==="
-              find "$SDK" -type f \
-                \( -name create-fself -o -name PkgTool.Core -o -name link.x \) \
-                2>/dev/null || true
-            '
-
-      # 5. Compiler et construire le package
-      - name: Diagnose OpenOrbis SDK
-        run: |
-          docker run --rm \
-            --entrypoint /bin/sh \
-            openorbisofficial/toolchain:latest \
-            -c '
-              echo "=== Variables ==="
-              echo "OO_PS4_TOOLCHAIN=$OO_PS4_TOOLCHAIN"
-
-              echo "=== Répertoires possibles ==="
-              ls -ld /lib/OpenOrbisSDK /OpenOrbisSDK /opt/OpenOrbisSDK 2>/dev/null || true
-
-              echo "=== Recherche des outils ==="
-              find / -type f \( \
-                -name create-fself -o \
-                -name PkgTool.Core \
-              \) 2>/dev/null | head -50
-            '
-
-      # 6. Publier les fichiers générés, même si le build échoue
-      - name: Upload build artifacts
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: M-PLAY-PS4-build
-          path: |
-            *.pkg
-            eboot.bin
-            pkg.gp4
-            build/**
-            sce_sys/param.sfo
-          if-no-files-found: warn
-          retention-days: 7
+  - name: Upload PS4 package
+    uses: actions/upload-artifact@v4
+    with:
+      name: M-PLAY-PS4-PKG
+      path: '*.pkg'
+      if-no-files-found: error
+      retention-days: 7
