@@ -1,4 +1,6 @@
-# M-PLAY PS4 — OpenOrbis starter build
+
+# M-PLAY PS4 — OpenOrbis build
+
 TITLE       := M-PLAY PS4
 VERSION     := 01.00
 TITLE_ID    := MPLY00001
@@ -11,9 +13,9 @@ PROJ        := mplay
 OUT_ELF     := $(INTDIR)/$(PROJ).elf
 OUT_OELF    := $(INTDIR)/$(PROJ).oelf
 
-CC          ?= clang
-CXX         ?= clang++
-LD          ?= ld.lld
+CC          := clang
+CXX         := clang++
+LD          := ld.lld
 PKG         := $(TOOLCHAIN)/bin/linux
 
 CORE_LIBS   := -lc -lkernel -lc++ -lSceLibcInternal
@@ -36,6 +38,7 @@ LIBMODULES  := $(wildcard sce_module/*)
 ASSETS      := $(shell find assets -type f 2>/dev/null | LC_ALL=C sort)
 
 .PHONY: all clean
+
 all: $(CONTENT_ID).pkg
 
 $(INTDIR):
@@ -47,10 +50,12 @@ $(INTDIR)/%.o: $(SRCDIR)/%.cpp | $(INTDIR)
 $(INTDIR)/%.o: $(SRCDIR)/%.c | $(INTDIR)
 	$(CC) $(CFLAGS) -o $@ $<
 
+# Générer l'exécutable PS4
 eboot.bin: $(OBJS)
 	$(LD) $(OBJS) -o $(OUT_ELF) $(LDFLAGS)
 	$(PKG)/create-fself -in=$(OUT_ELF) -out=$(OUT_OELF) --eboot "eboot.bin" --paid 0x3100000000000001
 
+# Créer les métadonnées de l'application
 sce_sys/param.sfo: Makefile
 	$(PKG)/PkgTool.Core sfo_new $@
 	$(PKG)/PkgTool.Core sfo_setentry $@ APP_TYPE --type Integer --maxsize 4 --value 1
@@ -64,13 +69,11 @@ sce_sys/param.sfo: Makefile
 	$(PKG)/PkgTool.Core sfo_setentry $@ TITLE_ID --type Utf8 --maxsize 12 --value '$(TITLE_ID)'
 	$(PKG)/PkgTool.Core sfo_setentry $@ VERSION --type Utf8 --maxsize 8 --value '$(VERSION)'
 
-eboot.bin: $(OBJS)
-	$(LD) $(OBJS) -o $(OUT_ELF) $(LDFLAGS)
-	$(PKG)/create-fself -in=$(OUT_ELF) -out=$(OUT_OELF) --eboot "eboot.bin" --paid 0x3100000000000001
-
+# Générer le projet de packaging
 pkg.gp4: eboot.bin sce_sys/param.sfo sce_sys/icon0.png sce_sys/about/right.sprx $(LIBMODULES) $(ASSETS)
 	python3 tools/make_gp4.py --out $@ --content-id $(CONTENT_ID) $^
 
+# Construire le PKG
 $(CONTENT_ID).pkg: pkg.gp4
 	$(PKG)/PkgTool.Core pkg_build $< .
 
