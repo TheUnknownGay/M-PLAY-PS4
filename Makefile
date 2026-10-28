@@ -1,5 +1,5 @@
 # ============================================================
-# M-PLAY PS4 — OpenOrbis SDK
+# M-PLAY PS4 — OpenOrbis Makefile
 # ============================================================
 
 TITLE       := M-PLAY PS4
@@ -27,13 +27,13 @@ CC          := clang
 CXX         := clang++
 LD          := ld.lld
 
-# Standalone create-fself built by GitHub Actions
+# FSELF generator built by GitHub Actions
 CREATE_FSELF := tools/create-fself
 
 # Core libraries
-CORE_LIBS   := -lc -lkernel -lc++ -lSceLibcInternal
+CORE_LIBS := -lc -lkernel -lc++ -lSceLibcInternal
 
-# Discover OpenOrbis libraries
+# Discover SDK library stubs
 ALL_STUBS := $(sort \
 	$(patsubst $(TOOLCHAIN)/lib/lib%.so,-l%,$(wildcard $(TOOLCHAIN)/lib/lib*.so)) \
 	$(patsubst $(TOOLCHAIN)/lib/lib%.a,-l%,$(wildcard $(TOOLCHAIN)/lib/lib*.a)) \
@@ -41,7 +41,7 @@ ALL_STUBS := $(sort \
 
 EXTRA_LIBS := $(filter-out $(CORE_LIBS),$(ALL_STUBS))
 
-# Compiler flags
+# Compilation flags
 CFLAGS := \
 	--target=x86_64-pc-freebsd12-elf \
 	-fPIC \
@@ -54,6 +54,7 @@ CXXFLAGS := $(CFLAGS) \
 	-isystem $(TOOLCHAIN)/include/c++/v1
 
 # Linker flags
+# crt1.o is passed before the program objects in the link command.
 LDFLAGS := \
 	-m elf_x86_64 \
 	-pie \
@@ -63,8 +64,7 @@ LDFLAGS := \
 	$(CORE_LIBS) \
 	--as-needed \
 	$(EXTRA_LIBS) \
-	--no-as-needed \
-	$(TOOLCHAIN)/lib/crt1.o
+	--no-as-needed
 
 # Source files
 CPPFILES := $(wildcard $(SRCDIR)/*.cpp)
@@ -74,7 +74,7 @@ OBJS := \
 	$(patsubst $(SRCDIR)/%.cpp,$(INTDIR)/%.o,$(CPPFILES)) \
 	$(patsubst $(SRCDIR)/%.c,$(INTDIR)/%.o,$(CFILES))
 
-# Additional package files
+# Package assets and optional modules
 LIBMODULES := $(wildcard sce_module/*)
 ASSETS := $(shell find assets -type f 2>/dev/null | LC_ALL=C sort)
 
@@ -86,41 +86,51 @@ ASSETS := $(shell find assets -type f 2>/dev/null | LC_ALL=C sort)
 
 all: $(OUT_PKG)
 
-# Create build directory
+# Build directory
 $(INTDIR):
 	mkdir -p $(INTDIR)
 
-# Validate required tools and SDK files
+# Validate required SDK files and tools
 check-toolchain:
 	@set -e; \
-	test -x "$(CC)" || command -v "$(CC)" >/dev/null; \
-	test -x "$(CXX)" || command -v "$(CXX)" >/dev/null; \
-	test -x "$(LD)" || command -v "$(LD)" >/dev/null; \
-	test -x "$(CREATE_FSELF)" || { echo "ERROR: $(CREATE_FSELF) is missing or not executable"; exit 1; }; \
-	test -f "$(TOOLCHAIN)/link.x" || { echo "ERROR: SDK link.x is missing"; exit 1; }; \
-	test -f "$(TOOLCHAIN)/lib/crt1.o" || { echo "ERROR: SDK crt1.o is missing"; exit 1; }; \
-	test -x "$(PKG)/PkgTool.Core" || { echo "ERROR: PkgTool.Core is missing or not executable"; exit 1; }; \
+	command -v "$(CC)" >/dev/null; \
+	command -v "$(CXX)" >/dev/null; \
+	command -v "$(LD)" >/dev/null; \
+	test -x "$(CREATE_FSELF)" || { echo "ERROR: $(CREATE_FSELF) missing or not executable"; exit 1; }; \
+	test -x "$(PKG)/PkgTool.Core" || { echo "ERROR: PkgTool.Core missing"; exit 1; }; \
+	test -f "$(TOOLCHAIN)/link.x" || { echo "ERROR: link.x missing"; exit 1; }; \
+	test -f "$(TOOLCHAIN)/lib/crt1.o" || { echo "ERROR: crt1.o missing"; exit 1; }; \
+	test -d "$(TOOLCHAIN)/lib" || { echo "ERROR: SDK lib directory missing"; exit 1; }; \
 	echo "OpenOrbis toolchain checks passed."
 
-# Compile C++ sources
+# Compile C++ files
 $(INTDIR)/%.o: $(SRCDIR)/%.cpp | $(INTDIR)
 	$(CXX) $(CXXFLAGS) -o $@ $<
 
-# Compile C sources
+# Compile C files
 $(INTDIR)/%.o: $(SRCDIR)/%.c | $(INTDIR)
 	$(CC) $(CFLAGS) -o $@ $<
 
-# Link executable and generate FSELF
+# Link ELF, then generate FSELF and eboot.bin
 $(OUT_EBOOT): $(OBJS) | check-toolchain
-	$(LD) $(OBJS) -o $(OUT_ELF) $(LDFLAGS)
+	$(LD) \
+		$(TOOLCHAIN)/lib/crt1.o \
+		$(OBJS) \
+		-o $(OUT_ELF) \
+		$(LDFLAGS)
+	@echo "=== ELF information ==="
+	file $(OUT_ELF)
+	readelf -h $(OUT_ELF)
+	readelf -Ws $(OUT_ELF) | grep -E '(_init|_fini)' || true
 	$(CREATE_FSELF) \
 		-in=$(OUT_ELF) \
 		-out=$(OUT_OELF) \
-		--eboot "eboot.bin" \
-		--paid 0x3100000000000001
-	cp $(OUT_OELF) $(OUT_EBOOT)
+		--eboot "$(OUT_EBOOT)" \
+		--paid 0x3100000000000001 \
+		-library-path="$(TOOLCHAIN)/lib"
+	@test -f "$(OUT_EBOOT)" || { echo "ERROR: eboot.bin was not generated"; exit 1; }
 
-# Generate PS4 param.sfo
+# Generate param.sfo
 sce_sys/param.sfo: Makefile
 	mkdir -p sce_sys
 	$(PKG)/PkgTool.Core sfo_new $@
@@ -146,6 +156,6 @@ pkg.gp4: $(OUT_EBOOT) sce_sys/param.sfo sce_sys/icon0.png $(LIBMODULES) $(ASSETS
 $(OUT_PKG): pkg.gp4 | check-toolchain
 	$(PKG)/PkgTool.Core pkg_build $< .
 
-# Remove generated files
+# Clean generated files
 clean:
 	rm -rf $(INTDIR) $(OUT_EBOOT) pkg.gp4 sce_sys/param.sfo *.pkg
