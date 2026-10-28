@@ -1,11 +1,14 @@
-
 name: Build M-PLAY PS4
 
 on:
   push:
-    branches: [main]
+    branches:
+      - main
+
   pull_request:
-    branches: [main]
+    branches:
+      - main
+
   workflow_dispatch:
 
 permissions:
@@ -13,26 +16,40 @@ permissions:
 
 jobs:
   build:
+    name: Compile and package M-PLAY PS4
     runs-on: ubuntu-latest
 
     steps:
-      - name: Récupérer le projet
+      - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Compiler avec OpenOrbis
+      - name: Verify project files
+        run: |
+          echo "Checking required files..."
+          test -f Makefile
+          test -f src/main.cpp
+          test -f tools/make_gp4.py
+          test -f sce_sys/icon0.png
+          echo "Required files found."
+
+      - name: Compile with OpenOrbis
         run: |
           docker run --rm \
-            -v "$PWD:/workspace" \
+            --user 0:0 \
+            -v "$GITHUB_WORKSPACE:/workspace" \
             -w /workspace \
             openorbisofficial/toolchain:latest \
             make
 
-      - name: Publier les fichiers générés
+      - name: Upload build artifacts
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: M-PLAY-PS4-build
           path: |
+            *.pkg
             eboot.bin
-            **/*.pkg
+            pkg.gp4
+            build/**
           if-no-files-found: warn
+          retention-days: 7
