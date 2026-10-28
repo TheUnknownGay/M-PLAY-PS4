@@ -1,12 +1,11 @@
+
 name: Build M-PLAY PS4
 
 on:
   push:
-    branches:
-      - main
+    branches: [main]
   pull_request:
-    branches:
-      - main
+    branches: [main]
   workflow_dispatch:
 
 permissions:
@@ -14,20 +13,21 @@ permissions:
 
 jobs:
   build:
-    name: Compile M-PLAY PS4
     runs-on: ubuntu-latest
 
     steps:
-      - name: Récupérer le code
+      - name: Récupérer le projet
         uses: actions/checkout@v4
 
       - name: Compiler avec OpenOrbis
-        uses: OpenOrbis/toolchain-action@main
-        with:
-          version: latest
-          command: make
+        run: |
+          docker run --rm \
+            -v "$PWD:/workspace" \
+            -w /workspace \
+            openorbisofficial/toolchain:latest \
+            make
 
-      - name: Archiver les fichiers générés
+      - name: Publier les fichiers générés
         if: always()
         uses: actions/upload-artifact@v4
         with:
