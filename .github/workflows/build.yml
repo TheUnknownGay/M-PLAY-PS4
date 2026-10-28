@@ -72,14 +72,25 @@ jobs:
             '
 
       # 4. Compiler et construire le package
-      - name: Compile with OpenOrbis
+      - name: Diagnose OpenOrbis installation
         run: |
           docker run --rm \
             --user 0:0 \
-            -v "$GITHUB_WORKSPACE:/workspace" \
-            -w /workspace \
+            --entrypoint /bin/sh \
             openorbisofficial/toolchain:latest \
-            make
+            -c '
+              echo "=== SDK directory ==="
+              ls -la /lib/OpenOrbisSDK || true
+
+              echo "=== Linux tools ==="
+              ls -la /lib/OpenOrbisSDK/bin/linux || true
+
+              echo "=== Search create-fself ==="
+              find / -type f -name create-fself 2>/dev/null || true
+
+              echo "=== Search PkgTool.Core ==="
+              find / -type f -name PkgTool.Core 2>/dev/null || true
+            '
 
       # 5. Publier les fichiers générés
       - name: Upload build artifacts
