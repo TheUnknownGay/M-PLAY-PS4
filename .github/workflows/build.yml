@@ -1,0 +1,38 @@
+name: Build M-PLAY PS4
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Compile M-PLAY PS4
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Récupérer le code
+        uses: actions/checkout@v4
+
+      - name: Compiler avec OpenOrbis
+        uses: OpenOrbis/toolchain-action@main
+        with:
+          version: latest
+          command: make
+
+      - name: Archiver les fichiers générés
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: M-PLAY-PS4-build
+          path: |
+            eboot.bin
+            **/*.pkg
+          if-no-files-found: warn
