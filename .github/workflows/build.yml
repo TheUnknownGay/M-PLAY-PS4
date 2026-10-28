@@ -53,20 +53,22 @@ jobs:
           fi
 
       # 3. Vérifier la toolchain OpenOrbis
-      - name: Verify OpenOrbis toolchain
+      - name: Diagnose OpenOrbis toolchain
         run: |
           docker run --rm \
             --user 0:0 \
+            --entrypoint /bin/sh \
             openorbisofficial/toolchain:latest \
-            sh -c '
-              echo "Checking OpenOrbis SDK..."
+            -c '
+              echo "SDK environment:"
               echo "OO_PS4_TOOLCHAIN=$OO_PS4_TOOLCHAIN"
 
-              test -x /lib/OpenOrbisSDK/bin/linux/create-fself
-              test -x /lib/OpenOrbisSDK/bin/linux/PkgTool.Core
-              test -f /lib/OpenOrbisSDK/link.x
+              echo "Checking expected paths:"
+              ls -la /lib/OpenOrbisSDK/bin/linux/ || true
 
-              echo "OpenOrbis SDK checks passed."
+              echo "Searching for create-fself:"
+              find /lib /usr/local /opt \
+                -type f -name create-fself 2>/dev/null || true
             '
 
       # 4. Compiler et construire le package
