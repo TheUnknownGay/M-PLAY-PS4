@@ -25,12 +25,28 @@ jobs:
 
       - name: Verify project files
         run: |
+          echo "Current directory:"
+          pwd
+
+          echo "Repository contents:"
+          ls -la
+
           echo "Checking required files..."
-          test -f Makefile
-          test -f src/main.cpp
-          test -f tools/make_gp4.py
-          test -f sce_sys/icon0.png
-          echo "Required files found."
+          missing=0
+
+          for file in Makefile src/main.cpp tools/make_gp4.py sce_sys/icon0.png; do
+            if [ -f "$file" ]; then
+              echo "OK: $file"
+            else
+              echo "MISSING: $file"
+              missing=1
+            fi
+          done
+
+          if [ "$missing" -ne 0 ]; then
+            echo "One or more required files are missing."
+            exit 1
+          fi
 
       - name: Compile with OpenOrbis
         run: |
