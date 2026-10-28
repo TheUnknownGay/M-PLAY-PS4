@@ -70,7 +70,7 @@ sce_sys/param.sfo: Makefile
 	$(PKG)/PkgTool.Core sfo_setentry $@ VERSION --type Utf8 --maxsize 8 --value '$(VERSION)'
 
 # Générer le projet de packaging
-pkg.gp4: eboot.bin sce_sys/param.sfo sce_sys/icon0.png sce_sys/about/right.sprx $(LIBMODULES) $(ASSETS)
+pkg.gp4: eboot.bin sce_sys/param.sfo sce_sys/icon0.png $(LIBMODULES) $(ASSETS)
 	python3 tools/make_gp4.py --out $@ --content-id $(CONTENT_ID) $^
 
 # Construire le PKG
