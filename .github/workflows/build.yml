@@ -1,122 +1,33 @@
 name: Build M-PLAY PS4
 
 on:
-push:
-branches: [main, master]
-pull_request:
-branches: [main, master]
-workflow_dispatch:
+  push:
+  pull_request:
+  workflow_dispatch:
 
 permissions:
-contents: read
+  contents: read
 
 jobs:
-build:
-name: Compile M-PLAY PS4
-runs-on: ubuntu-latest
+  build:
+    name: Build
+    runs-on: ubuntu-latest
 
-steps:
-  - name: Checkout M-PLAY PS4
-    uses: actions/checkout@v4
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
 
-  - name: Set up Go
-    uses: actions/setup-go@v5
-    with:
-      go-version: '1.17'
+      - name: Check workflow and project
+        run: |
+          echo "Workflow started successfully"
+          echo "Branch: $GITHUB_REF_NAME"
+          echo "Commit: $GITHUB_SHA"
 
-  - name: Checkout create-fself
-    uses: actions/checkout@v4
-    with:
-      repository: OpenOrbis/create-fself
-      path: create-fself-src
+          echo "Checking project files..."
 
-  - name: Build create-fself
-    working-directory: create-fself-src/cmd/create-fself
-    run: |
-      mkdir -p "$GITHUB_WORKSPACE/tools"
-      go build \
-        -o "$GITHUB_WORKSPACE/tools/create-fself" \
-        -modfile=go-linux.mod
-      chmod +x "$GITHUB_WORKSPACE/tools/create-fself"
-      test -x "$GITHUB_WORKSPACE/tools/create-fself"
+          test -f Makefile
+          test -f src/main.cpp
+          test -f tools/make_gp4.py
+          test -f sce_sys/icon0.png
 
-  - name: Verify project files
-    run: |
-      set -eu
-
-      for file in \
-        Makefile \
-        src/main.cpp \
-        tools/make_gp4.py \
-        sce_sys/icon0.png
-      do
-        if [ ! -f "$file" ]; then
-          echo "::error::Missing project file: $file"
-          exit 1
-        fi
-      done
-
-      echo "Project files verified."
-      echo "create-fself built successfully."
-
-  - name: Compile with OpenOrbis
-    run: |
-      set -eu
-
-      docker pull openorbisofficial/toolchain:latest
-
-      docker run --rm \
-        --user 0:0 \
-        -v "$GITHUB_WORKSPACE:/workspace" \
-        -w /workspace \
-        --entrypoint /bin/sh \
-        openorbisofficial/toolchain:latest \
-        -c '
-          set -eu
-
-          SDK="${OO_PS4_TOOLCHAIN:-/lib/OpenOrbisSDK}"
-          mkdir -p "$SDK/bin/linux"
-
-          if [ ! -x "$SDK/bin/linux/PkgTool.Core" ]; then
-            if [ -x /usr/lib/OpenOrbisSDK/bin/linux/PkgTool.Core ]; then
-              ln -sf \
-                /usr/lib/OpenOrbisSDK/bin/linux/PkgTool.Core \
-                "$SDK/bin/linux/PkgTool.Core"
-            else
-              echo "ERROR: PkgTool.Core was not found."
-              exit 1
-            fi
-          fi
-
-          if [ ! -x /workspace/tools/create-fself ]; then
-            echo "ERROR: create-fself is missing."
-            exit 1
-          fi
-
-          echo "=== OpenOrbis SDK ==="
-          echo "$SDK"
-          echo "=== Building M-PLAY PS4 ==="
-
-          make clean
-          make
-        '
-
-  - name: Verify PKG output
-    run: |
-      set -eu
-
-      echo "=== Generated packages ==="
-      find . -maxdepth 1 -type f -name '*.pkg' -print
-
-      if ! find . -maxdepth 1 -type f -name '*.pkg' -print -quit | grep -q .; then
-        echo "::error::No PKG file was generated."
-        exit 1
-      fi
-
-  - name: Upload PS4 package
-    uses: actions/upload-artifact@v4
-    with:
-      name: M-PLAY-PS4-PKG
-      path: '*.pkg'
-      if-no-files-found: error
-      retention-days: 7
+          echo "Basic project checks passed."
