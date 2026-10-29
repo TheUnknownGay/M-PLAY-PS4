@@ -1,6 +1,6 @@
 
 # ============================================================
-# M-PLAY PS4 — OpenOrbis Makefile
+# M-PLAY PS4 — Makefile OpenOrbis
 # ============================================================
 
 TITLE       := M-PLAY PS4
@@ -8,142 +8,179 @@ VERSION     := 01.00
 TITLE_ID    := MPLY00001
 CONTENT_ID  := IV0000-MPLY00001_00-MPLAYPS400000000
 
+# Chemins du SDK
 TOOLCHAIN   := /lib/OpenOrbisSDK
-PKG         := $(TOOLCHAIN)/bin/linux
+SDK_LIB     := $(TOOLCHAIN)/lib
+SDK_BIN     := $(TOOLCHAIN)/bin/linux
 
-SRCDIR      := src
-INTDIR      := build
-PROJ        := mplay
+# Outils
+CXX         := $(SDK_BIN)/clang++
+LD          := ld.lld
+PKGTOOL     := $(SDK_BIN)/PkgTool.Core
+CREATE_FSELF := tools/create-fself
+PYTHON      := python3
 
-OUT_ELF     := $(INTDIR)/$(PROJ).elf
-OUT_OELF    := $(INTDIR)/$(PROJ).oelf
+# Sources et sorties
+SOURCE      := src/main.cpp
+BUILD_DIR   := build
+OBJECT      := $(BUILD_DIR)/main.o
+OUT_ELF     := $(BUILD_DIR)/mplay.elf
+OUT_OELF    := $(BUILD_DIR)/mplay.oelf
 OUT_EBOOT   := eboot.bin
+OUT_SFO     := sce_sys/param.sfo
+OUT_GP4     := pkg.gp4
 OUT_PKG     := $(CONTENT_ID).pkg
 
-CC          := clang
-CXX         := clang++
-LD          := ld.lld
-
-CREATE_FSELF := tools/create-fself
-
-CORE_LIBS := -lc -lkernel -lc++ -lSceLibcInternal
-
-ALL_STUBS := $(sort \
-	$(patsubst $(TOOLCHAIN)/lib/lib%.so,-l%,$(wildcard $(TOOLCHAIN)/lib/lib*.so)) \
-	$(patsubst $(TOOLCHAIN)/lib/lib%.a,-l%,$(wildcard $(TOOLCHAIN)/lib/lib*.a)) \
-)
-
-EXTRA_LIBS := $(filter-out $(CORE_LIBS),$(ALL_STUBS))
-
-CFLAGS := \
+# Compilation PS4
+CXXFLAGS := \
 	--target=x86_64-pc-freebsd12-elf \
 	-fPIC \
 	-funwind-tables \
+	-fuse-init-array \
 	-c \
 	-isysroot $(TOOLCHAIN) \
-	-isystem $(TOOLCHAIN)/include
-
-CXXFLAGS := $(CFLAGS) \
+	-isystem $(TOOLCHAIN)/include \
 	-isystem $(TOOLCHAIN)/include/c++/v1
 
+# Liaison PS4
 LDFLAGS := \
 	-m elf_x86_64 \
 	-pie \
 	--script $(TOOLCHAIN)/link.x \
 	--eh-frame-hdr \
-	-L$(TOOLCHAIN)/lib \
-	$(CORE_LIBS) \
-	--as-needed \
-	$(EXTRA_LIBS) \
-	--no-as-needed
+	-L$(SDK_LIB)
 
-CPPFILES := $(wildcard $(SRCDIR)/*.cpp)
-CFILES   := $(wildcard $(SRCDIR)/*.c)
+LIBS := -lc -lkernel -lc++ -lSceLibcInternal
 
-OBJS := \
-	$(patsubst $(SRCDIR)/%.cpp,$(INTDIR)/%.o,$(CPPFILES)) \
-	$(patsubst $(SRCDIR)/%.c,$(INTDIR)/%.o,$(CFILES))
+.PHONY: all clean check-tools check-files sfo gp4 pkg
 
-LIBMODULES := $(wildcard sce_module/*)
-ASSETS := $(shell find assets -type f 2>/dev/null | LC_ALL=C sort)
+all: pkg
 
-.PHONY: all clean check-toolchain verify-package-metadata
+# ------------------------------------------------------------
+# Vérifier les outils et fichiers indispensables
+# ------------------------------------------------------------
 
-all: $(OUT_PKG)
+check-tools:
+	@test -x "$(CXX)" || { echo "ERREUR : clang++ introuvable : $(CXX)"; exit 1; }
+	@test -x "$(PKGTOOL)" || { echo "ERREUR : PkgTool.Core introuvable : $(PKGTOOL)"; exit 1; }
+	@test -x "$(CREATE_FSELF)" || { echo "ERREUR : create-fself introuvable ou non exécutable"; exit 1; }
+	@test -f "$(TOOLCHAIN)/lib/crt1.o" || { echo "ERREUR : crt1.o absent"; exit 1; }
+	@test -f "$(TOOLCHAIN)/link.x" || { echo "ERREUR : link.x absent"; exit 1; }
+	@test -f "$(SOURCE)" || { echo "ERREUR : source absent : $(SOURCE)"; exit 1; }
+	@test -f "tools/make_gp4.py" || { echo "ERREUR : tools/make_gp4.py absent"; exit 1; }
+	@test -f "sce_sys/icon0.png" || { echo "ERREUR : sce_sys/icon0.png absent"; exit 1; }
 
-$(INTDIR):
-	mkdir -p $(INTDIR)
+check-files:
+	@test -s "$(OUT_EBOOT)" || { echo "ERREUR : eboot.bin absent ou vide"; exit 1; }
+	@test -s "$(OUT_SFO)" || { echo "ERREUR : param.sfo absent ou vide"; exit 1; }
+	@test -s "sce_sys/icon0.png" || { echo "ERREUR : icon0.png absent ou vide"; exit 1; }
 
-check-toolchain:
-	@set -eu; \
-	command -v "$(CC)" >/dev/null; \
-	command -v "$(CXX)" >/dev/null; \
-	command -v "$(LD)" >/dev/null; \
-	test -x "$(CREATE_FSELF)" || { echo "ERROR: create-fself absent"; exit 1; }; \
-	test -x "$(PKG)/PkgTool.Core" || { echo "ERROR: PkgTool.Core absent"; exit 1; }; \
-	test -f "$(TOOLCHAIN)/link.x" || { echo "ERROR: link.x absent"; exit 1; }; \
-	test -f "$(TOOLCHAIN)/lib/crt1.o" || { echo "ERROR: crt1.o absent"; exit 1; }; \
-	echo "OpenOrbis toolchain checks passed."
+# ------------------------------------------------------------
+# Préparer les répertoires
+# ------------------------------------------------------------
 
-$(INTDIR)/%.o: $(SRCDIR)/%.cpp | $(INTDIR)
+$(BUILD_DIR):
+	mkdir -p $(BUILD_DIR)
+
+sce_sys:
+	mkdir -p sce_sys
+
+# ------------------------------------------------------------
+# Compiler le code C++
+# ------------------------------------------------------------
+
+$(OBJECT): $(SOURCE) | $(BUILD_DIR) check-tools
+	@echo "==> Compilation de $(SOURCE)"
 	$(CXX) $(CXXFLAGS) -o $@ $<
 
-$(INTDIR)/%.o: $(SRCDIR)/%.c | $(INTDIR)
-	$(CC) $(CFLAGS) -o $@ $<
+# ------------------------------------------------------------
+# Créer l'ELF
+# ------------------------------------------------------------
 
-# Link ELF, then generate FSELF and eboot.bin
-$(OUT_EBOOT): $(OBJS) | check-toolchain
-	$(LD) \
+$(OUT_ELF): $(OBJECT)
+	@echo "==> Liaison de l'ELF"
+	$(LD) $(LDFLAGS) -o $@ \
 		$(TOOLCHAIN)/lib/crt1.o \
-		$(OBJS) \
-		-o $(OUT_ELF) \
-		$(LDFLAGS)
-	@echo "=== ELF information ==="
-	file $(OUT_ELF)
+		$(OBJECT) \
+		$(LIBS)
+	@test -s "$@" || { echo "ERREUR : ELF absent ou vide"; exit 1; }
+
+# ------------------------------------------------------------
+# Créer l'OELF et eboot.bin
+# ------------------------------------------------------------
+
+$(OUT_EBOOT): $(OUT_ELF) check-tools
+	@echo "==> Création de eboot.bin"
 	$(CREATE_FSELF) \
 		-in=$(OUT_ELF) \
 		-out=$(OUT_OELF) \
 		--eboot "$(OUT_EBOOT)" \
 		--paid 0x3100000000000001 \
-		-library-path="$(TOOLCHAIN)/lib"
-	@test -s "$(OUT_EBOOT)" || { echo "ERROR: eboot.bin absent ou vide"; exit 1; }
+		--library-path="$(SDK_LIB)"
+	@test -s "$(OUT_OELF)" || { echo "ERREUR : OELF absent ou vide"; exit 1; }
+	@test -s "$(OUT_EBOOT)" || { echo "ERREUR : eboot.bin absent ou vide"; exit 1; }
 
-# Generate param.sfo with the official PkgTool argument order
-sce_sys/param.sfo: Makefile | check-toolchain
-	mkdir -p sce_sys
+# ------------------------------------------------------------
+# Générer sce_sys/param.sfo
+# ------------------------------------------------------------
+
+sfo: $(OUT_SFO)
+
+$(OUT_SFO): | sce_sys check-tools
+	@echo "==> Génération de $(OUT_SFO)"
 	rm -f "$@"
-	$(PKG)/PkgTool.Core sfo_new $@
-	$(PKG)/PkgTool.Core sfo_setentry $@ APP_TYPE --type Integer --maxsize 4 --value 1
-	$(PKG)/PkgTool.Core sfo_setentry $@ APP_VER --type Utf8 --maxsize 8 --value "$(VERSION)"
-	$(PKG)/PkgTool.Core sfo_setentry $@ ATTRIBUTE --type Integer --maxsize 4 --value 0
-	$(PKG)/PkgTool.Core sfo_setentry $@ CATEGORY --type Utf8 --maxsize 4 --value "gd"
-	$(PKG)/PkgTool.Core sfo_setentry $@ CONTENT_ID --type Utf8 --maxsize 48 --value "$(CONTENT_ID)"
-	$(PKG)/PkgTool.Core sfo_setentry $@ DOWNLOAD_DATA_SIZE --type Integer --maxsize 4 --value 0
-	$(PKG)/PkgTool.Core sfo_setentry $@ SYSTEM_VER --type Integer --maxsize 4 --value 0
-	$(PKG)/PkgTool.Core sfo_setentry $@ TITLE --type Utf8 --maxsize 128 --value "$(TITLE)"
-	$(PKG)/PkgTool.Core sfo_setentry $@ TITLE_ID --type Utf8 --maxsize 12 --value "$(TITLE_ID)"
-	$(PKG)/PkgTool.Core sfo_setentry $@ VERSION --type Utf8 --maxsize 8 --value "$(VERSION)"
-	@echo "=== Vérification des entrées SFO ==="
-	$(PKG)/PkgTool.Core sfo_listentries $@
+	$(PKGTOOL) sfo_new "$@"
+	$(PKGTOOL) sfo_setentry "$@" APP_TYPE --type Integer --maxsize 4 --value 1
+	$(PKGTOOL) sfo_setentry "$@" APP_VER --type Utf8 --maxsize 8 --value "$(VERSION)"
+	$(PKGTOOL) sfo_setentry "$@" ATTRIBUTE --type Integer --maxsize 4 --value 0
+	$(PKGTOOL) sfo_setentry "$@" CATEGORY --type Utf8 --maxsize 4 --value "gd"
+	$(PKGTOOL) sfo_setentry "$@" CONTENT_ID --type Utf8 --maxsize 48 --value "$(CONTENT_ID)"
+	$(PKGTOOL) sfo_setentry "$@" DOWNLOAD_DATA_SIZE --type Integer --maxsize 4 --value 0
+	$(PKGTOOL) sfo_setentry "$@" SYSTEM_VER --type Integer --maxsize 4 --value 0
+	$(PKGTOOL) sfo_setentry "$@" TITLE --type Utf8 --maxsize 128 --value "$(TITLE)"
+	$(PKGTOOL) sfo_setentry "$@" TITLE_ID --type Utf8 --maxsize 12 --value "$(TITLE_ID)"
+	$(PKGTOOL) sfo_setentry "$@" VERSION --type Utf8 --maxsize 8 --value "$(VERSION)"
+	@test -s "$@" || { echo "ERREUR : param.sfo non généré"; exit 1; }
+	@echo "==> Vérification des entrées SFO"
+	$(PKGTOOL) sfo_listentries "$@"
 
-# Generate GP4 package description
-pkg.gp4: $(OUT_EBOOT) sce_sys/param.sfo sce_sys/icon0.png $(LIBMODULES) $(ASSETS)
-	python3 tools/make_gp4.py \
-		--out $@ \
+# ------------------------------------------------------------
+# Créer le projet GP4
+# ------------------------------------------------------------
+
+gp4: $(OUT_GP4)
+
+$(OUT_GP4): $(OUT_EBOOT) $(OUT_SFO) sce_sys/icon0.png tools/make_gp4.py
+	@echo "==> Création du projet GP4"
+	$(PYTHON) tools/make_gp4.py \
+		--out "$(OUT_GP4)" \
 		--content-id "$(CONTENT_ID)" \
-		$(OUT_EBOOT) \
-		sce_sys/param.sfo \
-		sce_sys/icon0.png \
-		$(LIBMODULES) \
-		$(ASSETS)
+		"$(OUT_EBOOT)" \
+		"$(OUT_SFO)" \
+		"sce_sys/icon0.png"
+	@test -s "$@" || { echo "ERREUR : pkg.gp4 absent ou vide"; exit 1; }
 
-# Build final PKG
-$(OUT_PKG): pkg.gp4 | check-toolchain
-	rm -f "$@"
-	$(PKG)/PkgTool.Core pkg_build $< .
-	@test -s "$@" || { echo "ERROR: PKG absent ou vide"; exit 1; }
-	@echo "PKG généré : $@"
+# ------------------------------------------------------------
+# Construire le PKG
+# ------------------------------------------------------------
+
+pkg: $(OUT_PKG)
+
+$(OUT_PKG): $(OUT_GP4)
+	@echo "==> Vérification des fichiers avant empaquetage"
+	$(MAKE) check-files
+	@echo "==> Construction du PKG"
+	$(PKGTOOL) pkg_build "$(OUT_GP4)" .
+	@test -s "$@" || { echo "ERREUR : PKG non généré : $@"; exit 1; }
+	@echo "==> PKG généré : $@"
 	@ls -lh "$@"
 
+# ------------------------------------------------------------
+# Nettoyage
+# ------------------------------------------------------------
+
 clean:
-	rm -rf $(INTDIR) $(OUT_EBOOT) pkg.gp4 sce_sys/param.sfo *.pkg
+	rm -rf $(BUILD_DIR)
+	rm -f "$(OUT_EBOOT)" "$(OUT_OELF)" "$(OUT_GP4)" "$(OUT_PKG)"
+	rm -f "$(OUT_SFO)"
+	@echo "==> Nettoyage terminé"
