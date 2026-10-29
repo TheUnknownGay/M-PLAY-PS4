@@ -3,62 +3,39 @@ name: Build M-PLAY PS4
 
 on:
   push:
-  pull_request:
   workflow_dispatch:
-
-permissions:
-  contents: read
 
 jobs:
   build:
-    name: Compile and Package M-PLAY PS4
     runs-on: ubuntu-latest
 
     steps:
-      # 1. Récupérer le projet
-      - name: Checkout M-PLAY PS4
+      - name: Checkout project
         uses: actions/checkout@v4
 
-      # 2. Installer Go pour compiler create-fself
       - name: Setup Go
         uses: actions/setup-go@v5
         with:
-          go-version: '1.17'
+          go-version: "1.17"
 
-      # 3. Récupérer l'outil OpenOrbis create-fself
       - name: Checkout create-fself
         uses: actions/checkout@v4
         with:
           repository: OpenOrbis/create-fself
           path: create-fself-src
 
-      # 4. Construire create-fself
       - name: Build create-fself
-        working-directory: create-fself-src/cmd/create-fself
+        shell: bash
         run: |
-          set -eu
-
-          mkdir -p "$GITHUB_WORKSPACE/tools"
-
-          if [ ! -f go-linux.mod ]; then
-            echo "::error::go-linux.mod introuvable"
-            ls -la
-            exit 1
-          fi
-
-          go build \
-            -modfile=go-linux.mod \
-            -o "$GITHUB_WORKSPACE/tools/create-fself" .
-
+          set -euo pipefail
+          cd create-fself-src
+          go build -modfile=go-linux.mod -o "$GITHUB_WORKSPACE/tools/create-fself" .
           chmod +x "$GITHUB_WORKSPACE/tools/create-fself"
 
-          echo "create-fself compilé."
-
-      # 5. Vérifier les fichiers du projet
       - name: Verify project files
+        shell: bash
         run: |
-          set -eu
-
+          set -euo pipefail
           for file in \
             Makefile \
             src/main.cpp \
@@ -72,106 +49,116 @@ jobs:
             fi
           done
 
-          echo "Tous les fichiers requis sont présents."
-
-      # 6. Télécharger OpenOrbis
-      - name: Pull OpenOrbis Docker image
+      - name: Pull OpenOrbis toolchain
         run: docker pull openorbisofficial/toolchain:latest
 
-      # 7. Compiler l'application et générer le PKG
       - name: Compile with OpenOrbis
+        shell: bash
         run: |
-          set -eu
+          set -euo pipefail
 
           docker run --rm \
-            --user 0:0 \
             -v "$GITHUB_WORKSPACE:/workspace" \
             -w /workspace \
-            --entrypoint /bin/sh \
             openorbisofficial/toolchain:latest \
-            -c '
-              set -eu
+            bash -lc '
+              set -euo pipefail
 
-              # Installer Python 3 et les outils nécessaires
-              if ! command -v python3 >/dev/null 2>&1; then
-                if command -v apt-get >/dev/null 2>&1; then
-                  apt-get update
-                  apt-get install -y python3
-                elif command -v apk >/dev/null 2>&1; then
-                  apk add --no-cache python3
-                else
-                  echo "ERROR: Impossible d installer Python 3."
-                  exit 1
-                fi
-              fi
+              echo "=== SDK ==="
+              ls -ld /lib/OpenOrbisSDK
 
-              python3 --version
+              echo "=== Compilateurs ==="
+              command -v clang || true
+              command -v clang++ || true
+              command -v ld.lld || true
 
-              SDK="${OO_PS4_TOOLCHAIN:-/lib/OpenOrbisSDK}"
+              echo "=== PkgTool.Core ==="
+              find /lib/OpenOrbisSDK -name "PkgTool.Core" -type f
 
-              echo "=== OpenOrbis SDK ==="
-              echo "$SDK"
-
-              if [ ! -x /workspace/tools/create-fself ]; then
-                echo "ERROR: tools/create-fself absent ou non exécutable."
-                exit 1
-              fi
-
-              if [ ! -x "$SDK/bin/linux/PkgTool.Core" ]; then
-                if [ -x /usr/lib/OpenOrbisSDK/bin/linux/PkgTool.Core ]; then
-                  mkdir -p "$SDK/bin/linux"
-                  ln -sf \
-                    /usr/lib/OpenOrbisSDK/bin/linux/PkgTool.Core \
-                    "$SDK/bin/linux/PkgTool.Core"
-                else
-                  echo "ERROR: PkgTool.Core introuvable."
-                  exit 1
-                fi
-              fi
-
-              for file in "$SDK/link.x" "$SDK/lib/crt1.o"; do
-                if [ ! -f "$file" ]; then
-                  echo "ERROR: Fichier SDK manquant : $file"
-                  exit 1
-                fi
-              done
-
-              echo "=== Outils ==="
-              command -v clang
-              command -v clang++
-              command -v ld.lld
-              make --version | head -1
+              echo "=== Préparation ==="
+              chmod +x tools/create-fself
 
               echo "=== Nettoyage ==="
               make clean
 
               echo "=== Compilation ==="
               make
+
+              echo "=== Vérification de param.sfo ==="
+              if [ ! -s sce_sys/param.sfo ]; then
+                echo "ERREUR : sce_sys/param.sfo absent ou vide après make"
+                find sce_sys -maxdepth 2 -type f -print || true
+                exit 1
+              fi
+
+              ls -lh sce_sys/param.sfo
+
+              echo "=== Entrées de param.sfo ==="
+              /lib/OpenOrbisSDK/bin/linux/PkgTool.Core \
+                sfo_listentries sce_sys/param.sfo
+
+              echo "=== Vérification des fichiers du paquet ==="
+              test -s eboot.bin
+              test -s sce_sys/icon0.png
+              test -s pkg.gp4
+
+              echo "=== Compilation terminée ==="
             '
 
-      # 8. Vérifier le PKG généré
-      - name: Verify PKG output
+      - name: Verify generated files
         shell: bash
         run: |
           set -euo pipefail
 
-          echo "=== Recherche du PKG ==="
+          for file in \
+            eboot.bin \
+            build/mplay.elf \
+            build/mplay.oelf \
+            sce_sys/param.sfo \
+            sce_sys/icon0.png \
+            pkg.gp4
+          do
+            if [ ! -s "$file" ]; then
+              echo "::error::Fichier absent ou vide : $file"
+              exit 1
+            fi
 
-          PKG_FILE="$(find . -maxdepth 1 -type f -name '*.pkg' -print -quit)"
+            echo "=== $file ==="
+            ls -lh "$file"
+            file "$file" || true
+            sha256sum "$file"
+          done
 
-          if [ -z "$PKG_FILE" ]; then
-            echo "::error::Aucun fichier PKG n'a été généré."
-            exit 1
-          fi
+      - name: Upload build diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: M-PLAY-PS4-Diagnostics
+          path: |
+            sce_sys/param.sfo
+            sce_sys/icon0.png
+            eboot.bin
+            build/mplay.elf
+            build/mplay.oelf
+            pkg.gp4
+          if-no-files-found: warn
+          retention-days: 7
 
-          echo "PKG généré : $PKG_FILE"
-          ls -lh "$PKG_FILE"
+      - name: Verify PKG output
+        shell: bash
+        run: |
+          set -euo pipefail
+          find . -maxdepth 1 -type f -name '*.pkg' -size +0c \
+            -print -quit | grep -q . || {
+              echo "::error::Aucun PKG généré"
+              exit 1
+            }
 
-      # 9. Publier le PKG comme artefact téléchargeable
-      - name: Upload PS4 package
+      - name: Upload PKG artifact
         uses: actions/upload-artifact@v4
         with:
           name: M-PLAY-PS4-PKG
-          path: '*.pkg'
+          path: "*.pkg"
           if-no-files-found: error
           retention-days: 7
+          
