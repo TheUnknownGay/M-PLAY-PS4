@@ -10,20 +10,32 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
+      # ================================================
+      # 1. Récupération du projet
+      # ================================================
       - name: Checkout project
         uses: actions/checkout@v4
 
+      # ================================================
+      # 2. Installation de Go
+      # ================================================
       - name: Setup Go
         uses: actions/setup-go@v5
         with:
           go-version: "1.17"
 
+      # ================================================
+      # 3. Récupération de create-fself
+      # ================================================
       - name: Checkout create-fself
         uses: actions/checkout@v4
         with:
           repository: OpenOrbis/create-fself
           path: create-fself-src
 
+      # ================================================
+      # 4. Compilation de create-fself
+      # ================================================
       - name: Build create-fself
         shell: bash
         run: |
@@ -32,22 +44,32 @@ jobs:
           cd "$GITHUB_WORKSPACE/create-fself-src/cmd/create-fself"
 
           echo "=== Vérification du module Go ==="
+          test -f go.mod
+          test -f go-linux.mod
           ls -l go.mod go-linux.mod
 
           echo "=== Compilation de create-fself ==="
           go build -modfile=go-linux.mod \
             -o "$GITHUB_WORKSPACE/tools/create-fself" .
 
+          echo "=== Configuration des permissions ==="
           chmod +x "$GITHUB_WORKSPACE/tools/create-fself"
 
-          echo "=== Vérification du binaire généré ==="
+          echo "=== Vérification du binaire ==="
           test -s "$GITHUB_WORKSPACE/tools/create-fself"
           ls -lh "$GITHUB_WORKSPACE/tools/create-fself"
+          file "$GITHUB_WORKSPACE/tools/create-fself"
 
+      # ================================================
+      # 5. Vérification des fichiers du projet
+      # ================================================
       - name: Verify project files
         shell: bash
         run: |
           set -euo pipefail
+
+          echo "=== Vérification des fichiers ==="
+
           for file in \
             Makefile \
             src/main.cpp \
@@ -61,9 +83,17 @@ jobs:
             fi
           done
 
+          echo "Tous les fichiers requis sont présents."
+
+      # ================================================
+      # 6. Téléchargement du SDK OpenOrbis
+      # ================================================
       - name: Pull OpenOrbis toolchain
         run: docker pull openorbisofficial/toolchain:latest
 
+      # ================================================
+      # 7. Compilation et création du PKG
+      # ================================================
       - name: Compile with OpenOrbis
         shell: bash
         run: |
@@ -80,15 +110,18 @@ jobs:
               ls -ld /lib/OpenOrbisSDK
 
               echo "=== Compilateurs ==="
-              command -v clang || true
-              command -v clang++ || true
-              command -v ld.lld || true
+              command -v clang
+              command -v clang++
+              command -v ld.lld
 
               echo "=== PkgTool.Core ==="
-              find /lib/OpenOrbisSDK -name "PkgTool.Core" -type f
+              test -x /lib/OpenOrbisSDK/bin/linux/PkgTool.Core
+              ls -lh /lib/OpenOrbisSDK/bin/linux/PkgTool.Core
 
-              echo "=== Préparation ==="
-              chmod +x tools/create-fself
+              echo "=== Vérification de create-fself ==="
+              test -s tools/create-fself
+              ls -lh tools/create-fself
+              file tools/create-fself
 
               echo "=== Nettoyage ==="
               make clean
@@ -98,25 +131,39 @@ jobs:
 
               echo "=== Vérification de param.sfo ==="
               if [ ! -s sce_sys/param.sfo ]; then
-                echo "ERREUR : sce_sys/param.sfo absent ou vide après make"
+                echo "ERREUR : sce_sys/param.sfo absent ou vide"
                 find sce_sys -maxdepth 2 -type f -print || true
                 exit 1
               fi
 
               ls -lh sce_sys/param.sfo
 
-              echo "=== Entrées de param.sfo ==="
+              echo "=== Lecture des entrées SFO ==="
               /lib/OpenOrbisSDK/bin/linux/PkgTool.Core \
                 sfo_listentries sce_sys/param.sfo
 
-              echo "=== Vérification des fichiers du paquet ==="
-              test -s eboot.bin
-              test -s sce_sys/icon0.png
-              test -s pkg.gp4
+              echo "=== Vérification des fichiers générés ==="
+              for file in \
+                eboot.bin \
+                build/mplay.elf \
+                build/mplay.oelf \
+                sce_sys/param.sfo \
+                sce_sys/icon0.png \
+                pkg.gp4
+              do
+                if [ ! -s "$file" ]; then
+                  echo "ERREUR : fichier absent ou vide : $file"
+                  exit 1
+                fi
+                ls -lh "$file"
+              done
 
               echo "=== Compilation terminée ==="
             '
 
+      # ================================================
+      # 8. Vérification des binaires et du SFO
+      # ================================================
       - name: Verify generated files
         shell: bash
         run: |
@@ -141,6 +188,9 @@ jobs:
             sha256sum "$file"
           done
 
+      # ================================================
+      # 9. Artefact de diagnostic
+      # ================================================
       - name: Upload build diagnostics
         if: always()
         uses: actions/upload-artifact@v4
@@ -156,16 +206,28 @@ jobs:
           if-no-files-found: warn
           retention-days: 7
 
+      # ================================================
+      # 10. Vérification du PKG
+      # ================================================
       - name: Verify PKG output
         shell: bash
         run: |
           set -euo pipefail
-          find . -maxdepth 1 -type f -name '*.pkg' -size +0c \
-            -print -quit | grep -q . || {
-              echo "::error::Aucun PKG généré"
-              exit 1
-            }
 
+          PKG_FILE="$(find . -maxdepth 1 -type f -name '*.pkg' -size +0c -print -quit)"
+
+          if [ -z "$PKG_FILE" ]; then
+            echo "::error::Aucun PKG valide n'a été généré"
+            exit 1
+          fi
+
+          echo "PKG trouvé : $PKG_FILE"
+          ls -lh "$PKG_FILE"
+          sha256sum "$PKG_FILE"
+
+      # ================================================
+      # 11. Téléchargement du PKG
+      # ================================================
       - name: Upload PKG artifact
         uses: actions/upload-artifact@v4
         with:
