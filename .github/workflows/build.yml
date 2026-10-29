@@ -33,13 +33,11 @@ jobs:
           echo "=== Vérification du module Go ==="
           test -f go.mod
           test -f go-linux.mod
-          ls -l go.mod go-linux.mod
 
           echo "=== Compilation de create-fself ==="
           go build -modfile=go-linux.mod \
             -o "$GITHUB_WORKSPACE/tools/create-fself" .
 
-          echo "=== Configuration des permissions ==="
           chmod +x "$GITHUB_WORKSPACE/tools/create-fself"
 
           echo "=== Vérification du binaire ==="
@@ -75,16 +73,43 @@ jobs:
           echo "=== Utilisateur du runner ==="
           id
 
-          echo "=== Préparation du dossier de compilation ==="
           mkdir -p "$GITHUB_WORKSPACE/build"
           chmod -R u+rwX "$GITHUB_WORKSPACE"
 
-          echo "=== Vérification des permissions ==="
+          echo "=== Permissions du workspace ==="
           ls -ld "$GITHUB_WORKSPACE"
           ls -ld "$GITHUB_WORKSPACE/build"
 
       - name: Pull OpenOrbis toolchain
         run: docker pull openorbisofficial/toolchain:latest
+
+      - name: Build OpenOrbis image with Python
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          DOCKERFILE="$RUNNER_TEMP/Dockerfile.openorbis"
+
+          cat > "$DOCKERFILE" <<'DOCKER'
+          FROM openorbisofficial/toolchain:latest
+
+          RUN apt-get update \
+              && apt-get install -y --no-install-recommends python3 \
+              && rm -rf /var/lib/apt/lists/*
+
+          RUN python3 --version
+          DOCKER
+
+          echo "=== Création de l'image OpenOrbis avec Python 3 ==="
+          docker build \
+            --file "$DOCKERFILE" \
+            --tag mplay-openorbis-python:latest \
+            "$RUNNER_TEMP"
+
+          echo "=== Vérification de Python 3 ==="
+          docker run --rm \
+            mplay-openorbis-python:latest \
+            python3 --version
 
       - name: Compile with OpenOrbis
         shell: bash
@@ -101,12 +126,15 @@ jobs:
             --user "${RUNNER_UID}:${RUNNER_GID}" \
             -v "$GITHUB_WORKSPACE:/workspace" \
             -w /workspace \
-            openorbisofficial/toolchain:latest \
+            mplay-openorbis-python:latest \
             bash -lc '
               set -euo pipefail
 
               echo "=== Identité dans Docker ==="
               id
+
+              echo "=== Python 3 ==="
+              python3 --version
 
               echo "=== SDK ==="
               ls -ld /lib/OpenOrbisSDK
@@ -129,7 +157,6 @@ jobs:
               mkdir -p build
               touch build/.permission_test
               rm build/.permission_test
-              ls -ld build
 
               echo "=== Nettoyage ==="
               make clean
