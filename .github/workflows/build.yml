@@ -29,33 +29,19 @@ jobs:
         run: |
           set -euo pipefail
 
-          cd "$GITHUB_WORKSPACE/create-fself-src"
+          cd "$GITHUB_WORKSPACE/create-fself-src/cmd/create-fself"
 
-          echo "=== Répertoire du projet ==="
-          pwd
-          ls -la
+          echo "=== Vérification du module Go ==="
+          ls -l go.mod go-linux.mod
 
-          echo "=== Recherche des fichiers Go ==="
-          find . -maxdepth 3 \( -name go.mod -o -name go-linux.mod \) -print
-
-          if [ ! -f go.mod ] && [ ! -f go-linux.mod ]; then
-            echo "::error::Aucun fichier go.mod ou go-linux.mod trouvé à la racine."
-            exit 1
-          fi
-
-          if [ -f go.mod ]; then
-            echo "=== Compilation avec le module principal ==="
-            go build -o "$GITHUB_WORKSPACE/tools/create-fself" .
-          else
-            echo "=== Compilation avec go-linux.mod ==="
-            go build -modfile=go-linux.mod \
-              -o "$GITHUB_WORKSPACE/tools/create-fself" .
-          fi
+          echo "=== Compilation de create-fself ==="
+          go build -modfile=go-linux.mod \
+            -o "$GITHUB_WORKSPACE/tools/create-fself" .
 
           chmod +x "$GITHUB_WORKSPACE/tools/create-fself"
 
-          echo "=== Vérification du binaire ==="
-          test -x "$GITHUB_WORKSPACE/tools/create-fself"
+          echo "=== Vérification du binaire généré ==="
+          test -s "$GITHUB_WORKSPACE/tools/create-fself"
           ls -lh "$GITHUB_WORKSPACE/tools/create-fself"
 
       - name: Verify project files
