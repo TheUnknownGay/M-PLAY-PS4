@@ -67,6 +67,22 @@ jobs:
 
           echo "Tous les fichiers requis sont présents."
 
+      - name: Prepare workspace permissions
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          echo "=== Utilisateur du runner ==="
+          id
+
+          echo "=== Préparation du dossier de compilation ==="
+          mkdir -p "$GITHUB_WORKSPACE/build"
+          chmod -R u+rwX "$GITHUB_WORKSPACE"
+
+          echo "=== Vérification des permissions ==="
+          ls -ld "$GITHUB_WORKSPACE"
+          ls -ld "$GITHUB_WORKSPACE/build"
+
       - name: Pull OpenOrbis toolchain
         run: docker pull openorbisofficial/toolchain:latest
 
@@ -75,12 +91,22 @@ jobs:
         run: |
           set -euo pipefail
 
+          RUNNER_UID="$(id -u)"
+          RUNNER_GID="$(id -g)"
+
+          echo "=== UID du runner : $RUNNER_UID ==="
+          echo "=== GID du runner : $RUNNER_GID ==="
+
           docker run --rm \
+            --user "${RUNNER_UID}:${RUNNER_GID}" \
             -v "$GITHUB_WORKSPACE:/workspace" \
             -w /workspace \
             openorbisofficial/toolchain:latest \
             bash -lc '
               set -euo pipefail
+
+              echo "=== Identité dans Docker ==="
+              id
 
               echo "=== SDK ==="
               ls -ld /lib/OpenOrbisSDK
@@ -97,9 +123,13 @@ jobs:
               echo "=== Vérification de create-fself ==="
               test -s tools/create-fself
               ls -lh tools/create-fself
-
-              echo "=== Vérification du type de fichier ==="
               od -An -tx1 -N4 tools/create-fself
+
+              echo "=== Vérification du dossier de compilation ==="
+              mkdir -p build
+              touch build/.permission_test
+              rm build/.permission_test
+              ls -ld build
 
               echo "=== Nettoyage ==="
               make clean
